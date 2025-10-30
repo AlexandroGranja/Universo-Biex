@@ -1,0 +1,922 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌌 Universo 3D - Surpresa</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🌍</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; overflow: hidden; background: radial-gradient(ellipse at center, #060611 0%, #000 65%); }
+        body { font-family: 'Poppins', sans-serif; }
+
+        /* Canvas WebGL */
+        #scene { position: fixed; inset: 0; outline: none; display: block; }
+
+        /* UI overlays */
+        .hud { position: fixed; inset: 0; pointer-events: none; }
+        .top-right { position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; }
+        .bottom-center { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%); text-align: center; color: #fff; opacity: .9; }
+
+        .btn {
+            pointer-events: all; border: 1px solid rgba(255,255,255,.25); color: #fff; background: rgba(255,255,255,.08);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-radius: 999px; padding: 10px 14px; cursor: pointer;
+            transition: transform .18s ease, background .18s ease, box-shadow .18s ease; user-select: none; font-weight: 600;
+        }
+        .btn:hover { transform: translateY(-2px); background: rgba(255,255,255,.14); box-shadow: 0 8px 22px rgba(0,0,0,.35); }
+        .btn:active { transform: translateY(0); }
+        .btn.circle { width: 46px; height: 46px; display: grid; place-items: center; padding: 0; font-size: 1.1rem; }
+
+        .title { font-family: 'Dancing Script', cursive; font-size: clamp(22px, 6vw, 34px); color: #ffd3e4; text-shadow: 0 0 18px #ff6b9d88; }
+        .hint  { font-size: .95rem; opacity: .85; margin-top: 6px; }
+
+        /* Modal de foto */
+        .modal { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); z-index: 10; }
+        .modal.active { display: flex; }
+        .modal-card { position: relative; max-width: 92vw; max-height: 86vh; border-radius: 16px; overflow: hidden; background: #0c0c10; border: 1px solid rgba(255,255,255,.12); box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+        .modal-card img { display: block; max-width: 92vw; max-height: 70vh; object-fit: cover; }
+        .modal-info { padding: 12px 16px; color: #fff; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+        .badge { background: linear-gradient(135deg, #ff6b9d, #667eea); padding: 6px 12px; border-radius: 999px; font-weight: 700; letter-spacing: .3px; }
+        .close { position: absolute; top: 10px; right: 10px; }
+
+        /* Toast */
+        .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); background: rgba(0,0,0,.75); color: #fff; padding: 10px 16px; border-radius: 999px; border: 1px solid rgba(255,255,255,.15); backdrop-filter: blur(8px); display: none; }
+        .toast.show { display: block; animation: fade 2.8s ease both; }
+        @keyframes fade { 0%{ opacity:0; transform:translateX(-50%) translateY(10px);} 12%,88%{opacity:1; transform:translateX(-50%) translateY(0);} 100%{opacity:0; transform:translateX(-50%) translateY(-6px);} }
+
+        /* Reduzir qualidade no mobile para performance */
+        @media (max-width: 768px) {
+            .hint { font-size: .9rem; }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="scene" aria-label="Universo 3D"></canvas>
+
+    <div class="hud">
+        <div class="top-right">
+            <button id="musicToggle" class="btn circle" title="Música">🎵</button>
+            <button id="resetView" class="btn circle" title="Centralizar">🎯</button>
+            <button id="helpBtn" class="btn circle" title="Ajuda">❓</button>
+        </div>
+
+        <div class="bottom-center">
+            <div class="hint">Use o dedo para girar. Belisque para zoom.</div>
+        </div>
+    </div>
+
+    <!-- Modal removido: agora temos somente a Terra central -->
+
+    <div id="toast" class="toast">Toque novamente para iniciar a música 🎵</div>
+
+    <audio id="bgm" loop preload="auto"></audio>
+    <input id="bgmFile" type="file" accept="audio/*" style="display:none" />
+    <div id="ytPlayer" style="position:fixed;left:-9999px;top:-9999px;width:0;height:0;opacity:0;pointer-events:none;"></div>
+    <script src="https://www.youtube.com/iframe_api"></script>
+
+    <script type="module">
+        // Import via esm.sh (resolve bare specifiers inside the example modules)
+        import * as THREE from 'https://esm.sh/three@0.155';
+        import { OrbitControls } from 'https://esm.sh/three@0.155/examples/jsm/controls/OrbitControls.js';
+        import { EffectComposer } from 'https://esm.sh/three@0.155/examples/jsm/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'https://esm.sh/three@0.155/examples/jsm/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'https://esm.sh/three@0.155/examples/jsm/postprocessing/UnrealBloomPass.js';
+
+        // Renderer
+        const canvas = document.getElementById('scene');
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        if (THREE.SRGBColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace; else renderer.outputEncoding = THREE.sRGBEncoding;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.3;
+
+        // Scene & camera
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x02030a, 0.00035);
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 6000);
+        camera.position.set(0, 120, 780); // Posição original da câmera
+
+        // Controls
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; controls.dampingFactor = 0.06; controls.rotateSpeed = 0.7; controls.zoomSpeed = 1.1; controls.minDistance = 35; controls.maxDistance = 2600;
+        // Alinhar o alvo de rotação ao centro Terra+coração
+        controls.target.set(0, -10, 18);
+
+        // Lights
+        scene.add(new THREE.AmbientLight(0x6b7a90, 1.1));
+        const hemi = new THREE.HemisphereLight(0xb0d6ff, 0x080820, 0.6);
+        scene.add(hemi);
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+        keyLight.position.set(500, 300, 400);
+        scene.add(keyLight);
+
+        // Postprocessing (bloom)
+        const composer = new EffectComposer(renderer);
+        composer.addPass(new RenderPass(scene, camera));
+        const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.6, 0.8, 0.85);
+        composer.addPass(bloom);
+
+        // Starfield mais realista: camadas, variação de cor e parallax
+        function randomStarColor() {
+            // tons entre branco, levemente azul e levemente quente
+            const r = Math.random();
+            if (r < 0.45) return new THREE.Color('#ffffff');
+            if (r < 0.75) return new THREE.Color('#cfe4ff'); // azulada
+            return new THREE.Color('#ffd8a6'); // quente
+        }
+
+        function createStarLayer({ count, radius, size, opacity = 0.9, speed = 0.00015 }) {
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+            for (let i = 0; i < count; i++) {
+                const r = radius * Math.cbrt(Math.random());
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.sin(phi) * Math.sin(theta);
+                const z = r * Math.cos(phi);
+                positions[i * 3 + 0] = x;
+                positions[i * 3 + 1] = y;
+                positions[i * 3 + 2] = z;
+                const c = randomStarColor();
+                colors[i * 3 + 0] = c.r;
+                colors[i * 3 + 1] = c.g;
+                colors[i * 3 + 2] = c.b;
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            const mat = new THREE.PointsMaterial({ size, sizeAttenuation: true, transparent: true, opacity, vertexColors: true, depthWrite: false });
+            const points = new THREE.Points(geo, mat);
+            points.renderOrder = -5;
+            points.userData.speed = speed;
+            return points;
+        }
+
+        const starfield = new THREE.Group();
+        scene.add(starfield);
+        starfield.add(createStarLayer({ count: 5200, radius: 3200, size: 1.0, opacity: 0.85, speed: 0.00006 })); // distante e denso
+        starfield.add(createStarLayer({ count: 2600, radius: 2400, size: 1.6, opacity: 0.92, speed: 0.00010 })); // médio
+        starfield.add(createStarLayer({ count: 1100, radius: 1600, size: 2.2, opacity: 0.95, speed: 0.00018 })); // próximo e brilhante
+
+        // Estrelas cintilantes (sprites com brilho)
+        const twinkleGroup = new THREE.Group();
+        scene.add(twinkleGroup);
+
+        function makeStarTexture() {
+            const size = 64;
+            const canvas = document.createElement('canvas');
+            canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+            g.addColorStop(0, 'rgba(255,255,255,1)');
+            g.addColorStop(0.25, 'rgba(255,255,255,0.7)');
+            g.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = g; ctx.fillRect(0,0,size,size);
+            const tex = new THREE.CanvasTexture(canvas);
+            if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+            tex.needsUpdate = true; return tex;
+        }
+
+        const starTex = makeStarTexture();
+        const twinkleStars = [];
+        function createTwinkleStars(count = 150) {
+            for (let i = 0; i < count; i++) {
+                // leve variação de cor nas estrelas que cintilam
+                const c = randomStarColor();
+                const mat = new THREE.SpriteMaterial({ map: starTex, color: c, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending });
+                const s = new THREE.Sprite(mat);
+                const r = 2200 + Math.random()*500; // um pouco à frente do fundo
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                s.position.set(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
+                const scale = 6 + Math.random()*10; s.scale.set(scale, scale, 1);
+                s.userData.speed = 0.8 + Math.random()*1.2; s.userData.phase = Math.random()*Math.PI*2;
+                twinkleGroup.add(s); twinkleStars.push(s);
+            }
+        }
+        createTwinkleStars(220);
+
+        // ===== FRASES ROMÂNTICAS (como estrelas coloridas) =====
+        const romanticColors = [0xffffff];
+        // Paleta das palavras: branco, rosa e azul
+        const WORD_COLORS = ['#ffffff', '#ff6b9d', '#76a7ff'];
+        // Frases românticas e de aniversário (priorizar duas palavras, únicas)
+        const lovePhrases = [
+            'Feliz Aniversário','Meu Amor','Amor Eterno','Minha Vida','Meu Sol','Meu Céu','Para Sempre','Te Amo','Com Carinho','Beijos Doces','Abraço Quente','Meu Bem','Minha Musa','Meu Anjo','Doce Amor','Saudade Boa','Meu Porto','Nosso Amor','Meu Encanto','Meu Refúgio','Luz Minha','Meu Tesouro','Meu Sorriso','Meu Presente','Meu Universo','Minha Estrela','Meu Abrigo','Meu Destino','Meu Milagre','Meu Sonho','Nosso Destino','Nosso Lar','Nosso Refúgio','Nosso Universo','Alma Gêmea','Nós Dois','Nós Juntos','Nós Sempre','Nós Eternos','Amor Verdadeiro','Amor Infinito','Amor Único','Amor Sereno','Amor Intenso','Amor Luminoso','Amor Doce','Amor Forte','Amor Puro','Amor Leve','Paixão Doce','Paixão Linda','Paixão Nossa','Beijos Teus','Sorriso Lindo','Sorriso Teu','Abraço Teu','Meu Par','Meu Rumo','Meu Norte','Meu Sul','Meu Leste','Meu Oeste','Meu Tudo','Meu Mundo','Meu Caminho','Meu Motivo','Meu Orgulho','Meu Favorito','Minha Princesa','Minha Rainha','Minha Luz','Minha Flor','Minha Alegria','Minha Saudade','Minha Estrela','Minha Sorte','Minha Paz','Minha Cor','Minha Casa','Minha Cura','Minha Força','Minha Fé','Minha Poesia','Minha Canção','Minha História','Melhor Metade','Melhor Presente','Melhor Vida','Vida Nossa','Vida Doce','Vida Plena','Vida Linda','Parabéns Amor','Parabéns Vida','Parabéns Meu','Parabéns Querida','Parabéns Linda','Parabéns Musa','Feliz Vida','Feliz Amor','Feliz Nós','Feliz Sempre','Muitos Anos','Muita Luz','Muita Paz','Todo Amor','Todo Carinho','Gratidão Amor','Ternura Pura','Carinho Doce','Cumplicidade Nossa','Companheira Linda','Doce Presente','Doce Caminho','Doce Destino','Juntos Sempre','Juntos Eternos','Juntos Felizes','Juntos PraSempre','Juntos NaVida','Beleza Pura','Encanto Teu','Magia Nossa','Brilho Teu','Estrela Minha','Coração Teu','Coração Nosso','Meu Afeto','Meu Aconchego','Meu Axé','Meu Axê'
+        ];
+
+        // Palavras em órbita padrão (anel) e modo coração (top view)
+        const phraseOrbitGroup = new THREE.Group();
+        scene.add(phraseOrbitGroup);
+        const orbitWords = [];
+
+        const heartGroup = new THREE.Group();
+        scene.add(heartGroup);
+        const HEART_OFFSET = 0; // coração centrado no mesmo ponto da Terra
+        const HEART_Y_OFFSET = -10; // ajuste fino para centralizar melhor com a Terra
+        heartGroup.position.set(HEART_OFFSET, HEART_Y_OFFSET, 0);
+        heartGroup.rotation.x = 0; // alinhado ao eixo de rotação da Terra (equatorial)
+        const heartWords = [];
+
+        // parâmetros da Terra para evitar colisão visual
+        const EARTH_CENTER = new THREE.Vector3(0, -10, 18); // centro desejado da Terra
+        const EARTH_RADIUS = 180;
+        const EARTH_SAFE_MARGIN = 40; // margem de segurança para não encostar
+
+        // cache de texturas para não recriar o mesmo texto muitas vezes
+        const textTextureCache = new Map();
+        function getTextTexture(text, color) {
+            const key = `${text}|${color}`;
+            if (textTextureCache.has(key)) return textTextureCache.get(key);
+            const tex = textTexture(text, color);
+            textTextureCache.set(key, tex);
+            return tex;
+        }
+
+        function textTexture(text, color = '#ffffff') {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const fontSize = 24; // tamanho base
+            const scale = 3; // mais resolução para nitidez
+            ctx.font = `700 ${fontSize}px 'Poppins', system-ui, -apple-system`;
+            const metrics = ctx.measureText(text);
+            canvas.width = Math.ceil((metrics.width + 24) * scale);
+            canvas.height = Math.ceil((fontSize * 1.6) * scale);
+            // reapply font after resizing com escala
+            ctx.scale(scale, scale);
+            ctx.font = `700 ${fontSize}px 'Poppins', system-ui, -apple-system`;
+            // letras coloridas com contorno escuro nítido (sem blur)
+            ctx.shadowBlur = 0;
+            ctx.lineWidth = 2.4;
+            ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+            ctx.fillStyle = color;
+            ctx.textBaseline = 'middle';
+            ctx.textAlign = 'center';
+            ctx.strokeText(text, canvas.width/(2*scale), canvas.height/(2*scale));
+            ctx.fillText(text, canvas.width/(2*scale), canvas.height/(2*scale));
+
+            // estrelas (pontos) por palavra - usam mesma cor do texto
+            const words = text.split(/\s+/).filter(Boolean);
+            const spaceW = ctx.measureText(' ').width;
+            const wordWs = words.map(w => ctx.measureText(w).width);
+            const totalW = wordWs.reduce((a,b)=>a+b,0) + spaceW * Math.max(0, words.length-1);
+            let x = (canvas.width/scale - totalW)/2;
+            const y = canvas.height/scale/2 - fontSize*0.65; // ligeiramente acima do texto
+            for (let i=0;i<words.length;i++) {
+                const w = wordWs[i];
+                const cx = x + w/2;
+                const radius = 2;
+                ctx.fillStyle = color;
+                ctx.beginPath(); ctx.arc(cx, y, radius, 0, Math.PI*2); ctx.fill();
+                x += w + spaceW;
+            }
+            const tex = new THREE.CanvasTexture(canvas);
+            if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+            tex.anisotropy = Math.min(8, (renderer.capabilities && renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 8));
+            tex.generateMipmaps = true;
+            if (THREE.LinearMipmapLinearFilter) tex.minFilter = THREE.LinearMipmapLinearFilter;
+            tex.needsUpdate = true; return tex;
+        }
+
+        function createHeartWord(text, t, yOffset = 0) {
+            const color = WORD_COLORS[Math.floor(Math.random()*WORD_COLORS.length)];
+            const tex = getTextTexture(text, color);
+            const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.9, depthWrite: false, depthTest: true, blending: THREE.NormalBlending });
+            mat.toneMapped = false;
+            const s = new THREE.Sprite(mat);
+            // Coração clássico (mais definido) no plano XZ: constelação de palavras
+            const hx = 16 * Math.pow(Math.sin(t), 3);
+            const hy = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+            // proporções mais arredondadas e centradas (laterais menores)
+            const sx = 26; // largura
+            const sz = 26; // altura
+            const offsetZ = 18; // como antes: desloca no eixo Z para alinhar com a Terra
+            // jitter bem sutil para constelação
+            const jitter = 1.2;
+            const jx = (Math.random()-0.5) * jitter;
+            const jz = (Math.random()-0.5) * jitter;
+            // Plano XZ original: y = 0, z define a "altura" do coração
+            s.position.set(hx * sx + jx, yOffset, hy * sz + offsetZ + jz); // camadas acima/abaixo no eixo Y
+            s.userData = { baseScale: 20 };
+            heartGroup.add(s);
+            heartWords.push(s);
+            // dinâmica sutil tipo constelação
+            s.userData.basePosition = s.position.clone();
+            s.userData.radialAmp = 1.0 + Math.random()*1.6;
+            s.userData.verticalAmp = 0.6 + Math.random()*1.0;
+            s.userData.speed = 0.35 + Math.random()*0.7;
+            s.userData.phase = Math.random()*Math.PI*2;
+        }
+        const TOTAL_HEART_POINTS = 180;
+        const LAYERS_PER_SIDE = 5; // 5 para cima e 5 para baixo
+        const LAYER_STEP = 3.0;    // distância entre camadas em unidades de mundo
+        for (let i=0;i<TOTAL_HEART_POINTS; i++) {
+            const len = lovePhrases.length;
+            const baseIdx = i % len;
+            const text = lovePhrases[baseIdx];
+            const t = -Math.PI + (i / TOTAL_HEART_POINTS) * (2*Math.PI);
+            // linha central
+            createHeartWord(text, t, 0);
+            // camadas acima e abaixo
+            for (let k = 1; k <= LAYERS_PER_SIDE; k++) {
+                const offset = k * LAYER_STEP;
+                const upText = lovePhrases[(baseIdx + k) % len];
+                const downText = lovePhrases[(baseIdx - k + len) % len];
+                createHeartWord(upText, t,  offset);
+                createHeartWord(downText, t, -offset);
+            }
+        }
+
+        // Preenchimento interno do coração (camadas em escala), respeitando área de exclusão da Terra
+        function createHeartFillWord(text, t, scaleMul, yOffset = 0) {
+            const color = WORD_COLORS[Math.floor(Math.random()*WORD_COLORS.length)];
+            const tex = getTextTexture(text, color);
+            const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.85, depthWrite: false, depthTest: true, blending: THREE.NormalBlending });
+            mat.toneMapped = false;
+            const s = new THREE.Sprite(mat);
+            const hx = 16 * Math.pow(Math.sin(t), 3);
+            const hy = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+            const sx = 26 * scaleMul;
+            const sz = 26 * scaleMul;
+            const offsetZ = 18;
+            const jitter = 0.8;
+            const jx = (Math.random()-0.5) * jitter;
+            const jz = (Math.random()-0.5) * jitter;
+            const px = hx * sx + jx;
+            const py = yOffset;
+            const pz = hy * sz + offsetZ + jz;
+
+            // verificação de distância à Terra
+            const dx = px - EARTH_CENTER.x;
+            const dy = py - EARTH_CENTER.y;
+            const dz = pz - EARTH_CENTER.z;
+            const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+            if (dist < (EARTH_RADIUS + EARTH_SAFE_MARGIN)) return; // não adiciona se muito perto
+
+            s.position.set(px, py, pz);
+            s.userData = { baseScale: 16 };
+            heartGroup.add(s);
+            heartWords.push(s);
+            // dinâmica sutil tipo constelação
+            s.userData.basePosition = s.position.clone();
+            s.userData.radialAmp = 0.8 + Math.random()*1.2;
+            s.userData.verticalAmp = 0.5 + Math.random()*0.9;
+            s.userData.speed = 0.35 + Math.random()*0.7;
+            s.userData.phase = Math.random()*Math.PI*2;
+        }
+
+        // gerar o preenchimento com múltiplas escalas e camadas verticais
+        const FILL_SCALES = [0.15, 0.30, 0.45, 0.60, 0.75, 0.90];
+        const FILL_LAYERS_PER_SIDE = 4;
+        const FILL_LAYER_STEP = 3.0;
+        const FILL_POINTS = 160;
+        for (let i = 0; i < FILL_POINTS; i++) {
+            const t = -Math.PI + (i / FILL_POINTS) * (2*Math.PI);
+            const len = lovePhrases.length;
+            const baseIdx = i % len;
+            for (let sIdx = 0; sIdx < FILL_SCALES.length; sIdx++) {
+                const scaleMul = FILL_SCALES[sIdx];
+                const textCenter = lovePhrases[(baseIdx + sIdx) % len];
+                createHeartFillWord(textCenter, t, scaleMul, 0);
+                for (let k = 1; k <= FILL_LAYERS_PER_SIDE; k++) {
+                    const yoff = k * FILL_LAYER_STEP;
+                    const upText = lovePhrases[(baseIdx + sIdx + k) % len];
+                    const downText = lovePhrases[(baseIdx + sIdx - k + len) % len];
+                    createHeartFillWord(upText, t, scaleMul,  yoff);
+                    createHeartFillWord(downText, t, scaleMul, -yoff);
+                }
+            }
+        }
+
+        // --- Anel padrão (como estava) ---
+        function createOrbitWord(text, angle, elev, radius) {
+            const color = WORD_COLORS[Math.floor(Math.random()*WORD_COLORS.length)];
+            const tex = getTextTexture(text, color);
+            const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.85, depthWrite: false, depthTest: true, blending: THREE.NormalBlending });
+            mat.toneMapped = false;
+            const sprite = new THREE.Sprite(mat);
+            sprite.userData = { angle, elev, speed: 0.10 + Math.random()*0.08, radius: radius || 280, baseScale: 26 };
+            phraseOrbitGroup.add(sprite);
+            orbitWords.push(sprite);
+        }
+        for (let i=0;i<lovePhrases.length; i++) {
+            const ang = (i / lovePhrases.length) * Math.PI * 2 + Math.random()*0.15;
+            const elev = (Math.random()-0.5) * 0.25;
+            const ringRadius = (i % 2 === 0) ? 280 : 310;
+            createOrbitWord(lovePhrases[i], ang, elev, ringRadius);
+        }
+
+        // ===== LISTA DE FOTOS (usada na galeria interna) =====
+        const photoList = ['foto-2016.JPG','foto-2017.JPG','foto-2018.jpg','foto-2019.jpg','foto-2020.jpg','foto-2021.jpg','foto-2022.jpg','foto-2023.jpg','foto-2024.jpg','foto-2025.jpg'];
+
+        // ===== COMETAS DE FRASES (parabéns românticos) =====
+        const birthdayPhrases = [
+            'Feliz aniversário, meu amor',
+            'Parabéns, minha vida',
+            'Mais um ano ao teu lado',
+            'Te amo hoje e sempre',
+            'Você é meu presente',
+            'Amor que não acaba',
+            'Meu coração é seu',
+            'Que seus sonhos brilhem',
+            'Obrigada por existir',
+            'Você ilumina tudo',
+            'Juntos para sempre',
+            'Meu universo, você',
+            'Que a vida te sorria',
+            'Parabéns, luz da minha vida',
+            'Minha melhor escolha',
+            'Amo cada detalhe seu',
+            'Mais amor, mais nós',
+            'Você é minha paz',
+            'Hoje é o seu dia',
+            'Felicidades infinitas, amor'
+        ];
+        const phraseComets = [];
+
+        function launchPhraseComet() {
+            const phrase = birthdayPhrases[Math.floor(Math.random()*birthdayPhrases.length)];
+            const color = WORD_COLORS[Math.floor(Math.random()*WORD_COLORS.length)];
+            const tex = getTextTexture(phrase, color);
+            const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.0, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending });
+            mat.toneMapped = false;
+            const sprite = new THREE.Sprite(mat);
+            // trajetória aleatória logo atrás da Terra
+            const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
+            const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
+            const up = new THREE.Vector3().copy(camera.up).normalize();
+            const depth = 260 + Math.random()*240; // distância atrás da Terra
+            const base = earthGroup.position.clone().add(dir.clone().multiplyScalar(depth));
+            const halfWidth = 600 + Math.random()*420;
+            const height = 260;
+            const leftToRight = Math.random() < 0.5;
+            const startY = (Math.random()*2-1) * height * 0.7;
+            const endY = startY + (Math.random()*2-1) * height * 0.5;
+            const start = base.clone()
+                .add(right.multiplyScalar(leftToRight ? -halfWidth : halfWidth))
+                .add(up.multiplyScalar(startY));
+            const end = base.clone()
+                .add(right.multiplyScalar(leftToRight ? halfWidth : -halfWidth))
+                .add(up.multiplyScalar(endY));
+            sprite.position.copy(start);
+            const size = 300 + Math.random()*80; sprite.scale.set(size, size*0.42, 1);
+            const speed = 0.00012 + Math.random()*0.00012; // ainda mais devagar
+            sprite.userData = { t: 0, start, end, trailTime: 0, trailColor: color, speed };
+            sprite.renderOrder = -2;
+            scene.add(sprite);
+            phraseComets.push(sprite);
+        }
+        setInterval(launchPhraseComet, 10000);
+        setTimeout(launchPhraseComet, 1500); // lança um cedo para confirmar visualmente
+
+        // Nebulas (transparent billboards)
+        function createNebula(color = new THREE.Color('#667eea'), size = 2200, pos = new THREE.Vector3(0,0,-1800)) {
+            const g = new THREE.PlaneGeometry(size, size);
+            const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.03, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending });
+            const mesh = new THREE.Mesh(g, m);
+            mesh.position.copy(pos);
+            mesh.rotation.z = Math.random() * Math.PI;
+            mesh.renderOrder = -5;
+            scene.add(mesh);
+            return mesh;
+        }
+        // Nebulosas desativadas para um fundo limpo
+
+        // ---- SOMENTE A TERRA CENTRAL ----
+        const TEX_BASE = 'https://threejs.org/examples/textures/planets/';
+        const loader = new THREE.TextureLoader();
+
+        const earthGroup = new THREE.Group();
+        scene.add(earthGroup);
+        // Centraliza a Terra
+        earthGroup.position.set(0, -10, -45);
+        // atualiza o centro lógico usado por outros cálculos (preenchimento do coração)
+        if (typeof EARTH_CENTER !== 'undefined' && EARTH_CENTER && EARTH_CENTER.set) {
+            EARTH_CENTER.set(earthGroup.position.x, earthGroup.position.y, earthGroup.position.z);
+        }
+
+        const earthGeo = new THREE.SphereGeometry(180, 96, 96);
+        const earthMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75, metalness: 0.06, emissive: new THREE.Color('#0b1020').multiplyScalar(0.05) });
+        const earth = new THREE.Mesh(earthGeo, earthMat);
+        earthGroup.add(earth);
+
+        // Texturas da Terra
+        loader.load(TEX_BASE + 'earth_atmos_2048.jpg', (map)=> { if (map.colorSpace!==undefined) map.colorSpace = THREE.SRGBColorSpace; earthMat.map = map; earthMat.needsUpdate = true; });
+        loader.load(TEX_BASE + 'earth_specular_2048.jpg', (spec)=> { earthMat.metalness = 0.0; });
+
+        // Nuvens (extra)
+        const clouds = new THREE.Mesh(new THREE.SphereGeometry(185, 96, 96), new THREE.MeshLambertMaterial({
+            map: loader.load(TEX_BASE + 'earth_clouds_1024.png'), transparent: true, opacity: 0.35
+        }));
+        earthGroup.add(clouds);
+
+        // ===== LUA EM ÓRBITA =====
+        const moonPivot = new THREE.Object3D();
+        scene.add(moonPivot);
+        moonPivot.position.copy(earthGroup.position);
+
+        const MOON_RADIUS = 49; // ~27% da Terra
+        const MOON_ORBIT_RADIUS = 430; // distância da órbita
+        const MOON_ORBIT_HEIGHT = 90; // elevação acima do plano equatorial
+        const moonGeo = new THREE.SphereGeometry(MOON_RADIUS, 64, 64);
+        const moonMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1.0, metalness: 0.0 });
+        const moon = new THREE.Mesh(moonGeo, moonMat);
+        moon.position.set(MOON_ORBIT_RADIUS, MOON_ORBIT_HEIGHT, 0);
+        moonPivot.add(moon);
+        loader.load(TEX_BASE + 'moon_1024.jpg', (map)=> { if (map.colorSpace!==undefined) map.colorSpace = THREE.SRGBColorSpace; moonMat.map = map; moonMat.needsUpdate = true; });
+
+        // ===== Galeria interna (aparece ao aproximar) =====
+        const innerGalleryGroup = new THREE.Group();
+        innerGalleryGroup.visible = false;
+        innerGalleryGroup.position.copy(earthGroup.position);
+        scene.add(innerGalleryGroup);
+
+        // utilitário para desenhar retângulo arredondado
+        function drawRoundedRect(ctx, x, y, w, h, r) {
+            const radius = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.arcTo(x + w, y, x + w, y + h, radius);
+            ctx.arcTo(x + w, y + h, x, y + h, radius);
+            ctx.arcTo(x, y + h, x, y, radius);
+            ctx.arcTo(x, y, x + w, y, radius);
+            ctx.closePath();
+        }
+
+        // cria um Sprite com foto, com borda rosa e cantos arredondados
+        function createBorderedPhotoSprite(path, displaySize = 90, caption = '') {
+            const dim = 512; // resolução base alta p/ nitidez
+            const canvas = document.createElement('canvas');
+            canvas.width = dim; canvas.height = dim;
+            const ctx = canvas.getContext('2d');
+
+            const texture = new THREE.CanvasTexture(canvas);
+            if (THREE.SRGBColorSpace) texture.colorSpace = THREE.SRGBColorSpace;
+            texture.needsUpdate = true;
+
+            const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+            const sp = new THREE.Sprite(mat);
+            sp.scale.set(displaySize, displaySize, 1);
+
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                const border = 30; // espessura da borda
+                const radius = 64;
+                const footerH = 92; // faixa para texto
+
+                // fundo transparente
+                ctx.clearRect(0, 0, dim, dim);
+                // borda rosa
+                ctx.fillStyle = '#ff6b9d';
+                drawRoundedRect(ctx, 0, 0, dim, dim, radius);
+                ctx.fill();
+
+                // área de imagem com clip
+                ctx.save();
+                drawRoundedRect(ctx, border, border, dim - border * 2, dim - border * 2, radius * 0.72);
+                ctx.clip();
+                // desenha imagem cobrindo área interna
+                ctx.drawImage(img, border, border, dim - border * 2, dim - border * 2);
+                ctx.restore();
+
+                // faixa inferior para legenda (ano)
+                if (caption) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                    drawRoundedRect(ctx, border, dim - border - footerH, dim - border * 2, footerH, 28);
+                    ctx.fill();
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '700 88px Poppins, system-ui, -apple-system';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+                    ctx.lineWidth = 6;
+                    ctx.strokeText(caption, dim/2, dim - border - footerH/2);
+                    ctx.fillText(caption, dim/2, dim - border - footerH/2);
+                }
+
+                texture.needsUpdate = true;
+            };
+            img.src = path;
+            return sp;
+        }
+
+        function buildInnerGallery() {
+            innerGalleryGroup.clear();
+            innerGalleryGroup.position.copy(earthGroup.position);
+            const n = photoList.length; // usar exatamente as 10 imagens
+            const innerRadius = Math.max(120, 0.72 * EARTH_RADIUS); // dentro da Terra
+            const golden = Math.PI * (3 - Math.sqrt(5)); // golden angle
+            for (let i = 0; i < n; i++) {
+                const path = photoList[i];
+                const match = String(path).match(/(20\d{2})/);
+                const year = match ? match[1] : '';
+                const sp = createBorderedPhotoSprite(path, 90, year);
+                // distribuição em esfera (Fibonacci sphere)
+                const y = 1 - (i / (n - 1)) * 2; // -1..1
+                const r = Math.sqrt(Math.max(0, 1 - y*y));
+                const theta = i * golden;
+                const x = Math.cos(theta) * r;
+                const z = Math.sin(theta) * r;
+                const jitter = 6;
+                sp.position.set(
+                    x * innerRadius + (Math.random()-0.5)*jitter,
+                    y * innerRadius + (Math.random()-0.5)*jitter,
+                    z * innerRadius + (Math.random()-0.5)*jitter
+                );
+                innerGalleryGroup.add(sp);
+            }
+        }
+
+        let insideMode = false;
+        const ENTER_DIST = 340; // entra quando estiver bem perto da Terra
+        const EXIT_DIST  = 420; // sai quando afastar
+        function enterInner() {
+            if (insideMode) return;
+            insideMode = true;
+            buildInnerGallery();
+            innerGalleryGroup.visible = true;
+            // deixa a Terra translúcida para parecer "dentro"
+            if (!earth.material.transparent) earth.material.transparent = true;
+            earth.material.opacity = 0.35;
+            clouds.material.opacity = 0.15;
+        }
+        function exitInner() {
+            if (!insideMode) return;
+            insideMode = false;
+            innerGalleryGroup.visible = false; innerGalleryGroup.clear();
+            earth.material.opacity = 1.0;
+            clouds.material.opacity = 0.35;
+        }
+
+        // Atmosfera removida para eliminar o contorno azul
+
+        // Sem interação por clique – somente rotação e zoom
+
+        // Animation loop
+        let t = 0;
+        function animate() {
+            requestAnimationFrame(animate);
+            t += 0.0025;
+            // parallax de estrelas por camada
+            for (let i = 0; i < starfield.children.length; i++) {
+                const layer = starfield.children[i];
+                layer.rotation.y += layer.userData.speed || 0.0001;
+            }
+            twinkleGroup.rotation.y += 0.00022;
+            // cintilação
+            const tt = performance.now() * 0.001;
+            for (let i = 0; i < twinkleStars.length; i++) {
+                const sp = twinkleStars[i];
+                const a = Math.sin(tt * sp.userData.speed + sp.userData.phase) * 0.4 + 0.6;
+                sp.material.opacity = a;
+            }
+            // Manter o coração no mesmo lugar, apenas girando suavemente
+            heartGroup.visible = true;
+            phraseOrbitGroup.visible = false;
+            // constelação parada (sem rotação)
+            for (let i = 0; i < heartWords.length; i++) {
+                const s = heartWords[i];
+                // movimento sutil tipo constelação: ondulação radial e vertical
+                if (!s.userData.basePosition) s.userData.basePosition = s.position.clone();
+                const dir = new THREE.Vector3().subVectors(s.userData.basePosition, EARTH_CENTER).normalize();
+                const time = tt * (s.userData.speed || 0.6) + (s.userData.phase || 0);
+                const radial = Math.sin(time) * (s.userData.radialAmp || 1.2);
+                const vertical = Math.cos(time * 1.2) * (s.userData.verticalAmp || 0.8);
+                const newPos = new THREE.Vector3().copy(s.userData.basePosition)
+                    .add(dir.multiplyScalar(radial))
+                    .add(new THREE.Vector3(0, vertical, 0));
+                s.position.copy(newPos);
+                // sempre de frente para a câmera
+                s.lookAt(camera.position);
+                // leve variação de opacidade
+                if (s.material && s.material.opacity !== undefined) {
+                    s.material.opacity = 0.75 + 0.25 * (0.5 + 0.5 * Math.sin(time * 1.6));
+                }
+                // escala por distância
+                const dist = camera.position.distanceTo(s.position);
+                const k = THREE.MathUtils.clamp(dist / 900, 0.55, 0.9);
+                const bs = s.userData.baseScale || 22;
+                s.scale.set(bs * k, bs * 0.42 * k, 1);
+            }
+
+            // cometas de fotos desativados – mantemos somente cometas de frases
+
+            // atualizar cometas de frases
+            for (let i = phraseComets.length - 1; i >= 0; i--) {
+                const c = phraseComets[i];
+                c.userData.t += (c.userData.speed || 0.0012); // velocidade própria por cometa
+                const t01 = c.userData.t;
+                const smooth = t01 * t01 * (3 - 2 * t01); // smoothstep
+                c.position.lerpVectors(c.userData.start, c.userData.end, smooth);
+                // fade mais longo para combinar com movimento lento
+                c.material.opacity = t01 < 0.25 ? t01 * 4 : (1 - Math.max(0, t01 - 0.75) / 0.25);
+                // trail colorido
+                if (t01 < 1) {
+                    c.userData.trailTime += 0.016;
+                    if (c.userData.trailTime > 0.04) {
+                        c.userData.trailTime = 0;
+                        const pm = new THREE.SpriteMaterial({ map: starTex, color: new THREE.Color(c.userData.trailColor), transparent: true, opacity: 0.8, depthWrite: false, blending: THREE.AdditiveBlending });
+                        const p = new THREE.Sprite(pm); p.position.copy(c.position); const s = 10 + Math.random()*16; p.scale.set(s, s, 1); p.renderOrder = -3;
+                        scene.add(p);
+                        setTimeout(()=>{ p.material.opacity = 0.0; scene.remove(p); }, 700);
+                    }
+                }
+                if (t01 >= 1.0) { scene.remove(c); phraseComets.splice(i,1); }
+            }
+            // girar a Terra e as nuvens
+            earth.rotation.y += 0.0015;
+            clouds.rotation.y += 0.0022;
+
+            // Lua em órbita (mantém o pivot no centro da Terra)
+            moonPivot.position.copy(earthGroup.position);
+            moonPivot.rotation.y += 0.0082; // velocidade orbital (mais rápida que a Terra)
+            moon.rotation.y += 0.0016; // rotação própria um pouco mais rápida
+
+            // alternar para galeria interna quando a câmera se aproximar da Terra
+            const distToEarth = camera.position.distanceTo(earthGroup.position);
+            if (!insideMode && distToEarth < ENTER_DIST) {
+                enterInner();
+            } else if (insideMode && distToEarth > EXIT_DIST) {
+                exitInner();
+            }
+            if (insideMode) {
+                innerGalleryGroup.rotation.y += 0.0015; // leve giro da galeria
+                // manter as fotos olhando para a câmera
+                for (let i = 0; i < innerGalleryGroup.children.length; i++) {
+                    const sp = innerGalleryGroup.children[i];
+                    sp.lookAt(camera.position);
+                }
+            }
+            controls.update();
+            composer.render();
+        }
+        animate();
+
+        // Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+            bloom.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Música & UI
+        const bgm = document.getElementById('bgm');
+        const bgmFile = document.getElementById('bgmFile');
+        let ytPlayer = null;
+        let currentSourceType = 'audio'; // 'audio' | 'youtube'
+        let currentYouTubeId = null;
+        const musicToggle = document.getElementById('musicToggle');
+        const resetBtn = document.getElementById('resetView');
+        const helpBtn = document.getElementById('helpBtn');
+        const toast = document.getElementById('toast');
+
+        let musicOn = false;
+        const DEFAULT_BGMS = [
+            'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+            'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3'
+        ];
+
+        function isYouTubeUrl(url) { return /youtu\.be\//i.test(url) || /youtube\.com\//i.test(url); }
+        function extractYouTubeId(url) {
+            const m1 = url.match(/youtu\.be\/([\w-]{11})/); if (m1) return m1[1];
+            const m2 = url.match(/[?&]v=([\w-]{11})/); if (m2) return m2[1];
+            const m3 = url.match(/\/shorts\/([\w-]{11})/); if (m3) return m3[1];
+            return null;
+        }
+
+        function ensureYtPlayer(videoId) {
+            currentSourceType = 'youtube'; currentYouTubeId = videoId;
+            if (window.YT && window.YT.Player) {
+                if (!ytPlayer) {
+                    ytPlayer = new YT.Player('ytPlayer', {
+                        width: 0, height: 0, videoId,
+                        playerVars: { autoplay: 0, controls: 0, rel: 0, loop: 1, playlist: videoId, modestbranding: 1, playsinline: 1 },
+                        events: {
+                            onReady: () => { ytPlayer.setVolume(70); },
+                            onStateChange: (e) => {
+                                if (e.data === YT.PlayerState.ENDED) ytPlayer.playVideo();
+                            }
+                        }
+                    });
+                } else {
+                    ytPlayer.loadVideoById({ videoId, startSeconds: 0, suggestedQuality: 'small' });
+                    ytPlayer.setLoop && ytPlayer.setLoop(true);
+                }
+            } else {
+                window._pendingYtId = videoId;
+            }
+        }
+
+        // YouTube API callback (global)
+        window.onYouTubeIframeAPIReady = () => {
+            if (window._pendingYtId) ensureYtPlayer(window._pendingYtId);
+        };
+
+        const YT_DEFAULT_ID = '3ooSLQPur9U';
+
+        function switchToAudio(url) {
+            currentSourceType = 'audio';
+            try { if (ytPlayer) ytPlayer.stopVideo(); } catch {}
+            try { bgm.pause(); } catch {}
+            bgm.onerror = () => { // fallback automático para YouTube se o arquivo local não carregar
+                ensureYtPlayer(YT_DEFAULT_ID); currentSourceType = 'youtube'; musicOn = false; musicToggle.textContent = '🎵';
+            };
+            bgm.src = encodeURI(url); bgm.load(); musicOn = false; musicToggle.textContent = '🎵';
+        }
+
+        function loadBgmFromUrl(url) {
+            if (isYouTubeUrl(url)) {
+                const id = extractYouTubeId(url);
+                if (id) { ensureYtPlayer(id); musicOn = false; musicToggle.textContent = '🎵'; }
+                else { toast.textContent = 'Não consegui ler o link do YouTube.'; toast.classList.add('show'); setTimeout(()=> toast.classList.remove('show'), 2800); }
+            } else {
+                switchToAudio(url);
+            }
+        }
+
+        function setupBgm() {
+            // Sempre tenta primeiro o MP3 local; se falhar, onerror faz fallback para YouTube
+            const localPath = './Mapei - Don\'t Wait [Acoustic Piano Version] - BW (youtube).mp3';
+            localStorage.setItem('customBgmType', 'audio');
+            localStorage.setItem('customBgmUrl', localPath);
+            localStorage.setItem('customYtId', YT_DEFAULT_ID);
+            switchToAudio(localPath);
+        }
+        setupBgm();
+        function tryPlay() {
+            if (currentSourceType === 'youtube') {
+                try {
+                    if (!ytPlayer) return; ytPlayer.playVideo(); ytPlayer.setVolume(70);
+                    musicOn = true; musicToggle.textContent = '🔊';
+                } catch {
+                    toast.classList.add('show'); setTimeout(()=> toast.classList.remove('show'), 2800);
+                }
+            } else {
+            bgm.volume = 0.7;
+            bgm.play().then(() => { musicOn = true; musicToggle.textContent = '🔊'; }).catch(() => {
+                    // se falhar tocar o MP3 (ex.: não encontrado), usar YouTube
+                    ensureYtPlayer(YT_DEFAULT_ID); currentSourceType = 'youtube';
+                    setTimeout(() => { tryPlay(); }, 200);
+                });
+            }
+        }
+        musicToggle.addEventListener('click', (e) => {
+            if (e.shiftKey) { bgmFile.click(); return; }
+            if (musicOn) {
+                if (currentSourceType === 'youtube') { try{ ytPlayer.pauseVideo(); }catch{} } else { try{ bgm.pause(); }catch{} }
+                musicOn=false; musicToggle.textContent='🔇';
+            } else {
+                tryPlay();
+            }
+        });
+        // botão direito: colar URL (ex.: MP3 da Mapei Don't Wait)
+        musicToggle.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            const url = prompt('Cole um link de MP3, um caminho relativo (ex.: ./musica.mp3) ou URL do YouTube');
+            if (!url) return;
+            if (isYouTubeUrl(url)) {
+                const id = extractYouTubeId(url);
+                if (id) {
+                    localStorage.setItem('customBgmType', 'youtube');
+                    localStorage.setItem('customYtId', id);
+                    localStorage.removeItem('customBgmUrl');
+                    ensureYtPlayer(id); tryPlay();
+                } else {
+                    toast.textContent = 'Link do YouTube inválido.'; toast.classList.add('show'); setTimeout(()=> toast.classList.remove('show'), 2800);
+                }
+            } else {
+                localStorage.setItem('customBgmType', 'audio');
+                localStorage.setItem('customBgmUrl', url);
+                localStorage.removeItem('customYtId');
+                switchToAudio(url); tryPlay();
+            }
+        });
+        // arquivo local ao segurar Shift e clicar no botão
+        bgmFile.addEventListener('change', () => {
+            const file = bgmFile.files && bgmFile.files[0]; if (!file) return;
+            const objectUrl = URL.createObjectURL(file);
+            localStorage.setItem('customBgmType', 'audio');
+            localStorage.setItem('customBgmUrl', objectUrl);
+            localStorage.removeItem('customYtId');
+            switchToAudio(objectUrl); tryPlay();
+        });
+        document.addEventListener('click', () => { if (!musicOn) tryPlay(); }, { once: true });
+
+        resetBtn.addEventListener('click', () => { 
+            controls.reset(); 
+            controls.target.set(0, -10, 18);
+            camera.position.set(0, 120, 780); // Posição original da câmera 
+        });
+        helpBtn.addEventListener('click', () => { toast.textContent = 'Gire com o dedo e use pinch para zoom ✨'; toast.classList.add('show'); setTimeout(()=> toast.classList.remove('show'), 2600); });
+    </script>
+</body>
+</html>
+
+
