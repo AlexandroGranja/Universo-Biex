@@ -718,7 +718,7 @@
                 // trail colorido
                 if (t01 < 1) {
                     c.userData.trailTime += 0.016;
-                    if (c.userData.trailTime > 0.04) {
+                    if (c.userData.trailTime > 0.03) {
                         c.userData.trailTime = 0;
                         const pm = new THREE.SpriteMaterial({ map: starTex, color: new THREE.Color(c.userData.trailColor), transparent: true, opacity: 0.8, depthWrite: false, blending: THREE.AdditiveBlending });
                         const p = new THREE.Sprite(pm); p.position.copy(c.position); const s = 10 + Math.random()*16; p.scale.set(s, s, 1); p.renderOrder = -3;
